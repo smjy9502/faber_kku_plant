@@ -1,83 +1,110 @@
-import 'package:faber_kku_plant/screens/error_screen.dart';
-import 'package:firebase_auth/firebase_auth.dart';
-import 'package:firebase_core/firebase_core.dart';
-import 'package:flutter/material.dart';
-import 'package:intl/date_symbol_data_local.dart'; // ✅ locale 초기화용
-import 'screens/main_screen.dart';
-import 'screens/info_screen.dart';
-import 'screens/diary_screen.dart';
-import 'package:flutter/foundation.dart' as foundation;
-import 'firebase_options.dart';
 import 'dart:html' as html;
-
+import 'package:flutter/foundation.dart' as foundation;
+import 'package:flutter/material.dart';
+import 'package:firebase_core/firebase_core.dart';
+import 'package:firebase_auth/firebase_auth.dart';
+import 'package:intl/date_symbol_data_local.dart';
+import 'firebase_options.dart';
+import 'screens/main_screen.dart';
+import 'screens/error_screen.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
   try {
-    // FirebaseOptions 명시적 전달
-    await Firebase.initializeApp(
-      options: DefaultFirebaseOptions.currentPlatform,
-    );
+    await Firebase.initializeApp(options: DefaultFirebaseOptions.currentPlatform);
     await FirebaseAuth.instance.signInAnonymously();
-    await initializeDateFormatting('ko_KR', null);// ✅ 한국어 날짜 포맷 초기화
-    runApp(const FaberKkuPlantApp());
+    await initializeDateFormatting('ko_KR', null);
+    runApp(const FaberKkuPlantGateApp());
   } catch (e) {
     print("Firebase 초기화 실패: $e");
-    runApp(MaterialApp(home: ErrorScreen()));
+    runApp(const MaterialApp(home: ErrorScreen(), debugShowCheckedModeBanner: false));
   }
 }
 
+class FaberKkuPlantGateApp extends StatefulWidget {
+  const FaberKkuPlantGateApp({super.key});
 
+  @override
+  State<FaberKkuPlantGateApp> createState() => _FaberKkuPlantGateAppState();
+}
 
-class FaberKkuPlantApp extends StatelessWidget {
-  const FaberKkuPlantApp({super.key});
+class _FaberKkuPlantGateAppState extends State<FaberKkuPlantGateApp> {
+  bool? _allowAccess;
+  bool _isMobile = false;
+  String? _userId;
+
+  @override
+  void initState() {
+    super.initState();
+    _checkAccessLogic();
+  }
+
+  void _checkAccessLogic() {
+    bool allowed = false;
+    bool mobile = false;
+    String? userId;
+
+    if (foundation.kIsWeb) {
+      final uri = Uri.parse(html.window.location.href);
+      final userAgent = html.window.navigator.userAgent.toLowerCase();
+      mobile = userAgent.contains('mobile') ||
+          userAgent.contains('android') ||
+          userAgent.contains('iphone');
+
+      if (!mobile) {
+        allowed = false;
+        html.window.sessionStorage.remove('entry_visited');
+      } else {
+        final storedOnce = html.window.sessionStorage['entry_visited'];
+        if (uri.queryParameters.length == 1 &&
+            uri.queryParameters.containsKey('no') &&
+            int.tryParse(uri.queryParameters['no'] ?? '') != null &&
+            (storedOnce == null || storedOnce != 'true')) {
+          html.window.sessionStorage['entry_visited'] = 'true';
+          userId = uri.queryParameters['no']!;
+          final cleanUrl = uri.removeFragment().replace(queryParameters: {}).toString();
+          html.window.history.replaceState(null, '', cleanUrl);
+          allowed = true;
+        } else {
+          allowed = false;
+        }
+      }
+    } else {
+      allowed = false;
+    }
+
+    setState(() {
+      _allowAccess = allowed;
+      _isMobile = mobile;
+      _userId = userId;
+    });
+  }
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: 'faber_kku_plant',
+    if (_allowAccess == null) {
+      return const MaterialApp(
+        debugShowCheckedModeBanner: false,
+        home: Scaffold(
+          backgroundColor: Colors.black,
+          body: Center(child: CircularProgressIndicator(color: Colors.white)),
+        ),
+      );
+    }
+    if (_allowAccess == true && _isMobile && _userId != null) {
+      return MaterialApp(
+        title: 'faber_kku_plant',
+        theme: ThemeData(
+          primarySwatch: Colors.green,
+          fontFamily: 'Pretendard',
+        ),
+        debugShowCheckedModeBanner: false,
+        home: MainScreen(userId: _userId!), // userId 전달
+      );
+    }
+    return const MaterialApp(
       debugShowCheckedModeBanner: false,
-      theme: ThemeData(
-        primarySwatch: Colors.green,
-        fontFamily: 'Pretendard',
-      ),
-      initialRoute: '/',
-      routes: {
-        '/': (context) => const MainScreen(),
-        '/info': (context) => const InfoScreen(),
-        '/diary': (context) => const DiaryScreen(),
-      },
+      home: ErrorScreen(),
     );
   }
 }
-
-Future<bool> checkInitialAccess() async {
-  if (foundation.kIsWeb) {
-    final uri = Uri.parse(html.window.location.href);
-    final hasUrlParams = uri.queryParameters.isNotEmpty;
-
-    // 1. URL 파라미터 없으면 세션스토리지 삭제
-    if (!hasUrlParams) {
-      html.window.sessionStorage.remove('params');
-    } else {
-      // 2. URL 파라미터 있으면 세션스토리지 저장
-      html.window.sessionStorage['params'] =
-          uri.queryParameters.entries.map((e) => '${e.key}=${e.value}').join('&');
-    }
-
-    // 3. 세션스토리지 체크
-    final storedParams = html.window.sessionStorage['params'];
-    if (!hasUrlParams && (storedParams == null || storedParams.isEmpty)) {
-      return false; // ErrorScreen 표시
-    }
-
-    // 4. 모바일 체크 (기존 로직 유지)
-    final userAgent = html.window.navigator.userAgent?.toLowerCase() ?? '';
-    final isMobile = userAgent.contains('mobile') ||
-        userAgent.contains('android') ||
-        userAgent.contains('iphone');
-    return isMobile;
-  }
-  return true;
-}
-
